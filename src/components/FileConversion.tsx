@@ -7,7 +7,7 @@ import axios from 'axios';
 interface FileConversionProps {
   onUpgradePrompt: () => void;
 }
-const API_BASE_URL = process.env.REACT_APP_API_URL;
+
 
 const FileConversion: React.FC<FileConversionProps> = ({ onUpgradePrompt }) => {
   const [conversionCount, setConversionCount] = useState(0); // Today's conversion count
@@ -41,7 +41,7 @@ const FileConversion: React.FC<FileConversionProps> = ({ onUpgradePrompt }) => {
   useEffect(() => {
     const fetchConversionCount = async () => {
       try {
-        const res = await axios.get(`${API_BASE_URL}/conversionCount`);
+        const res = await axios.get('https://mp4-to-mp3-backend-hu8o.onrender.com/conversionCount');
         setTotalConversionCount(res.data.totalCount);
       } catch (err) {
         console.error('Failed to fetch conversion count:', err);
@@ -76,7 +76,7 @@ const FileConversion: React.FC<FileConversionProps> = ({ onUpgradePrompt }) => {
     formData.append('file', file);
 
     try {
-      const res = await axios.post(`${API_BASE_URL}/convert`, formData, {
+      const res = await axios.post('https://mp4-to-mp3-backend-hu8o.onrender.com/convert', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
