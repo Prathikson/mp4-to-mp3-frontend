@@ -3,7 +3,7 @@
 import { useDropzone } from 'react-dropzone';
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Download, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Download, RefreshCw, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
 interface FileConversionProps {
@@ -21,15 +21,17 @@ const fmt = (b: number) =>
   b < 1024 * 1024 ? `${(b / 1024).toFixed(0)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
 
 export default function FileConversion({ onUpgradePrompt }: FileConversionProps) {
-  const [file, setFile]           = useState<File | null>(null);
-  const [stage, setStage]         = useState<Stage>('idle');
-  const [downloadUrl, setDownloadUrl] = useState('');
-  const [progress, setProgress]   = useState(0);
-  const [totalCount, setTotalCount] = useState<number | null>(null);
-  const [isDragOver, setIsDragOver] = useState(false);
+  const [file, setFile]               = useState<File | null>(null);
+  const [stage, setStage]             = useState<Stage>('idle');
+  const [fileName, setFileName]       = useState(''); // just the filename from backend
+  const [progress, setProgress]       = useState(0);
+  const [totalCount, setTotalCount]   = useState<number | null>(null);
+  const [isDragOver, setIsDragOver]   = useState(false);
 
   useEffect(() => {
-    axios.get(`${API_URL}/conversionCount`).then(r => setTotalCount(r.data.totalCount)).catch(() => {});
+    axios.get(`${API_URL}/conversionCount`)
+      .then(r => setTotalCount(r.data.totalCount))
+      .catch(() => {});
   }, []);
 
   const onDrop = useCallback((files: File[]) => {
@@ -37,7 +39,7 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
     if (!files.length) return;
     setFile(files[0]);
     setStage('selected');
-    setDownloadUrl('');
+    setFileName('');
     setProgress(0);
   }, []);
 
@@ -53,16 +55,28 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
     if (!file) return;
     setStage('converting');
     setProgress(0);
-    const tick = setInterval(() => setProgress(p => (p < 82 ? p + Math.random() * 9 : p)), 380);
+
+    const tick = setInterval(() => {
+      setProgress(p => (p < 82 ? p + Math.random() * 9 : p));
+    }, 380);
+
     const fd = new FormData();
     fd.append('file', file);
+
     try {
       const res = await axios.post(`${API_URL}/convert`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+
       clearInterval(tick);
       setProgress(100);
-      setTimeout(() => { setDownloadUrl(res.data.downloadUrl); setStage('done'); }, 350);
+
+      // Store just the filename — we build the download URL ourselves
+      // so it always uses the correct API_URL (no protocol mismatch)
+      const name = res.data.fileName || res.data.downloadUrl?.split('/').pop() || 'converted.mp3';
+      setFileName(name);
+
+      setTimeout(() => setStage('done'), 350);
     } catch {
       clearInterval(tick);
       setStage('error');
@@ -70,21 +84,26 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
   };
 
   const handleDownload = () => {
-    if (!downloadUrl) return;
-    // Fix: ensure correct protocol for localhost
-    let url = downloadUrl;
-    if (process.env.NODE_ENV === 'development') {
-      url = url.replace(/^https:\/\/localhost/, 'http://localhost');
-    }
+    if (!fileName) return;
+
+    // Build the URL ourselves using API_URL — this is always correct
+    // regardless of what the backend returns
+    const url = `${API_URL}/download/${encodeURIComponent(fileName)}`;
+
     const a = document.createElement('a');
     a.href = url;
-    a.download = url.split('/').pop() || 'converted.mp3';
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   };
 
-  const reset = () => { setFile(null); setStage('idle'); setDownloadUrl(''); setProgress(0); };
+  const reset = () => {
+    setFile(null);
+    setStage('idle');
+    setFileName('');
+    setProgress(0);
+  };
 
   return (
     <div className="w-full">
@@ -103,16 +122,24 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
         <input {...getInputProps()} />
         <AnimatePresence mode="wait">
           {stage === 'selected' && file ? (
-            <motion.div key="sel" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="flex flex-col items-center gap-2 text-center">
+            <motion.div
+              key="sel"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="flex flex-col items-center gap-2 text-center"
+            >
               <p className="font-display-md text-2xl" style={{ color: 'var(--text)' }}>
                 {file.name}
               </p>
-              <p className="text-sm" style={{ color: 'var(--text-2)' }}>{fmt(file.size)} · Drop another to replace</p>
+              <p className="text-sm" style={{ color: 'var(--text-2)' }}>
+                {fmt(file.size)} · Drop another to replace
+              </p>
             </motion.div>
           ) : (
-            <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="flex flex-col items-center gap-3 text-center">
+            <motion.div
+              key="idle"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="flex flex-col items-center gap-3 text-center"
+            >
               <p className="font-display text-4xl sm:text-5xl" style={{ color: 'var(--text)' }}>
                 DROP YOUR MP4
               </p>
@@ -130,7 +157,8 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
 
           {/* Convert button */}
           {stage === 'selected' && (
-            <motion.button key="btn"
+            <motion.button
+              key="btn"
               initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
               whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}
               onClick={handleConvert}
@@ -144,18 +172,28 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
             </motion.button>
           )}
 
-          {/* Progress */}
+          {/* Progress bar */}
           {stage === 'converting' && (
-            <motion.div key="prog" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            <motion.div
+              key="prog"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="w-full py-4 px-6 flex items-center justify-between"
-              style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+              style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}
+            >
               <div className="flex-1 mr-6">
                 <div className="h-px w-full" style={{ backgroundColor: 'var(--border)' }}>
-                  <motion.div className="h-full" style={{ backgroundColor: 'var(--accent)' }}
-                    animate={{ width: `${progress}%` }} transition={{ duration: 0.3, ease: 'easeOut' }} />
+                  <motion.div
+                    className="h-full"
+                    style={{ backgroundColor: 'var(--accent)' }}
+                    animate={{ width: `${progress}%` }}
+                    transition={{ duration: 0.3, ease: 'easeOut' }}
+                  />
                 </div>
               </div>
-              <span className="text-xs font-700 uppercase tracking-widest tabular-nums" style={{ color: 'var(--text-2)' }}>
+              <span
+                className="text-xs font-700 uppercase tracking-widest tabular-nums"
+                style={{ color: 'var(--text-2)' }}
+              >
                 {Math.round(progress)}%
               </span>
             </motion.div>
@@ -163,8 +201,11 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
 
           {/* Done */}
           {stage === 'done' && (
-            <motion.div key="done" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-              className="flex gap-3">
+            <motion.div
+              key="done"
+              initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="flex gap-3"
+            >
               <motion.button
                 whileHover={{ x: 4 }} whileTap={{ scale: 0.98 }}
                 onClick={handleDownload}
@@ -174,11 +215,18 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
                 <span>Download MP3</span>
                 <Download size={16} />
               </motion.button>
-              <button onClick={reset}
+              <button
+                onClick={reset}
                 className="px-5 py-4 text-xs font-600 uppercase tracking-widest transition-colors duration-150"
                 style={{ border: '1px solid var(--border)', color: 'var(--text-2)' }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--text)'; (e.currentTarget as HTMLElement).style.color = 'var(--text)'; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.color = 'var(--text-2)'; }}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--text)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--text)';
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)';
+                  (e.currentTarget as HTMLElement).style.color = 'var(--text-2)';
+                }}
               >
                 <RefreshCw size={14} />
               </button>
@@ -187,14 +235,21 @@ export default function FileConversion({ onUpgradePrompt }: FileConversionProps)
 
           {/* Error */}
           {stage === 'error' && (
-            <motion.div key="err" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            <motion.div
+              key="err"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
               className="flex items-center justify-between px-6 py-4"
-              style={{ border: '1px solid var(--border)' }}>
-              <span className="text-sm font-medium" style={{ color: 'var(--text-2)' }}>
+              style={{ border: '1px solid var(--border)' }}
+            >
+              <span className="text-sm font-medium flex items-center gap-2" style={{ color: 'var(--text-2)' }}>
+                <AlertCircle size={14} />
                 Conversion failed — check the file and try again
               </span>
-              <button onClick={reset} className="text-xs font-700 uppercase tracking-widest transition-colors duration-150 ml-4"
-                style={{ color: 'var(--accent)' }}>
+              <button
+                onClick={reset}
+                className="text-xs font-700 uppercase tracking-widest transition-colors duration-150 ml-4"
+                style={{ color: 'var(--accent)' }}
+              >
                 Retry
               </button>
             </motion.div>
